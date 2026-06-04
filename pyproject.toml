@@ -1,0 +1,14 @@
+[project]
+name = "video-mate"
+version = "0.1.0"
+description = "Self-hosted yt-dlp video downloader with a REST API"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "yt-dlp[curl-cffi,default]>=2026.3.17",
+]
+
+# Application, not a library — don't try to build/install the project itself.
+[tool.uv]
+package = false

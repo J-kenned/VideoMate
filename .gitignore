@@ -1,0 +1,13 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded media (host-download mode)
+/downloads/
+
+# Cookie store — contains session secrets, never commit
+/cookies/
+
+# This repo's CLAUDE.md is force-tracked despite the user's global gitignore
+!CLAUDE.md
