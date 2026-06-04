@@ -25,8 +25,15 @@ from pydantic import BaseModel, ConfigDict
 
 from .cookies import resolve_cookie_file
 
-# Final-filename template; combined with a forced ``paths.home`` per request.
-OUTTMPL = "%(title).200B [%(id)s].%(ext)s"
+# Output templates (combined with a forced ``paths.home`` per request).
+# Stream/info: a single flat file. Download: a per-item folder so the media,
+# subtitle sidecars, .info.json, and any per-chapter clips live together —
+# a clean, generic layout a future Plex add-on can reorganize from.
+FLAT_OUTTMPL = {"default": "%(title).200B [%(id)s].%(ext)s"}
+ITEM_OUTTMPL = {
+    "default": "%(title).180B [%(id)s]/%(title).180B [%(id)s].%(ext)s",
+    "chapter": "%(title).180B [%(id)s]/chapters/%(section_number)02d - %(section_title)s.%(ext)s",
+}
 
 # opts-dict keys that grant code execution, arbitrary file read, or writes
 # outside our control. Key names verified against yt_dlp.parse_options().
@@ -63,11 +70,11 @@ class CommonOptions(BaseModel):
     audio_only: bool = False
     audio_format: str = "m4a"
     download_sections: Optional[str] = None    # e.g. "00:01:00-00:02:00" (clip)
-    # subtitles
-    subtitles: bool = False
-    auto_subtitles: bool = False
-    sub_langs: Optional[str] = None            # e.g. "en,es"
-    embed_subtitles: bool = False
+    split_chapters: bool = False               # also write one clip per chapter (keeps full)
+    # subtitles — on by default; writes .srt sidecars (manual preferred, auto as fallback)
+    subtitles: bool = True
+    sub_langs: Optional[str] = None            # default "en"; e.g. "en,es" or "all"
+    embed_subtitles: bool = False              # mux subs into the file instead of/as well as sidecar
     # embedding
     embed_thumbnail: bool = False
     embed_metadata: bool = False
@@ -108,12 +115,12 @@ def _common_tokens(c: CommonOptions) -> list[str]:
         if not section.startswith(("*", "#")):
             section = f"*{section}"
         t.append(f"--download-sections={section}")
+    if c.split_chapters:
+        t.append("--split-chapters")
     if c.subtitles:
-        t.append("--write-subs")
-    if c.auto_subtitles:
-        t.append("--write-auto-subs")
-    if c.sub_langs:
-        t.append(f"--sub-langs={c.sub_langs}")
+        # manual + auto (auto acts as fallback for langs lacking human subs), → .srt
+        t += ["--write-subs", "--write-auto-subs", "--convert-subs=srt",
+              f"--sub-langs={c.sub_langs or 'en'}"]
     if c.embed_subtitles:
         t.append("--embed-subs")
     if c.embed_thumbnail:
@@ -176,6 +183,7 @@ def build_opts(
     url: str,
     dest_dir: Path,
     write_info: bool,
+    outtmpl: dict[str, str],
 ) -> tuple[dict[str, Any], list[str]]:
     """Compose the final yt-dlp opts dict and report any stripped passthrough keys."""
     tokens = ["--ignore-config", "--no-warnings", "--quiet", *_common_tokens(common)]
@@ -188,7 +196,7 @@ def build_opts(
     if not (unsafe_allowed() and "paths" in clean):
         opts["paths"] = {"home": str(dest_dir)}
     if not (unsafe_allowed() and "outtmpl" in clean):
-        opts["outtmpl"] = {"default": OUTTMPL}
+        opts["outtmpl"] = dict(outtmpl)
     opts["noplaylist"] = not bool(common.playlist_items)
     opts["writeinfojson"] = write_info
 

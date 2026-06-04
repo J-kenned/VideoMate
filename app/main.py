@@ -29,7 +29,13 @@ from starlette.background import BackgroundTask
 
 from . import config, monitor, ytdlp
 from .cookies import available_cookie_domains, cookie_status
-from .options import CommonOptions, DANGEROUS_OPT_KEYS, unsafe_allowed
+from .options import (
+    FLAT_OUTTMPL,
+    ITEM_OUTTMPL,
+    CommonOptions,
+    DANGEROUS_OPT_KEYS,
+    unsafe_allowed,
+)
 
 
 @asynccontextmanager
@@ -125,25 +131,30 @@ async def resolve(req: ResolveRequest):
 
     if req.mode is Mode.download:
         try:
-            path, meta, dropped = await ytdlp.download(
-                url, req.options, req.raw_options, config.DOWNLOAD_DIR, write_info=True
+            primary, meta, dropped = await ytdlp.download(
+                url, req.options, req.raw_options, config.DOWNLOAD_DIR,
+                write_info=True, outtmpl=ITEM_OUTTMPL,
             )
         except ytdlp.YtdlpError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
+        item_dir = primary.parent
         return {
             "mode": "download",
-            "file": path.name,
-            "path": str(path),
-            "size_bytes": path.stat().st_size,
+            "dir": str(item_dir),
+            "files": ytdlp.list_outputs(item_dir),
             "dropped_options": dropped,
             "metadata": meta,
         }
 
-    # stream: download to a unique throwaway dir, relay, delete after sending.
+    # stream: single file only — subtitles sidecars / chapter splits would fan out
+    # to multiple files, which can't be relayed as one response. Force single-file.
+    stream_opts = req.options.model_copy(
+        update={"subtitles": False, "split_chapters": False, "embed_subtitles": False}
+    )
     workdir = config.TMP_DIR / uuid.uuid4().hex
     try:
         path, _, dropped = await ytdlp.download(
-            url, req.options, req.raw_options, workdir, write_info=False
+            url, stream_opts, req.raw_options, workdir, write_info=False, outtmpl=FLAT_OUTTMPL
         )
     except ytdlp.YtdlpError as exc:
         shutil.rmtree(workdir, ignore_errors=True)

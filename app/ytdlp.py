@@ -20,7 +20,7 @@ from yt_dlp.utils import DownloadError
 from yt_dlp.version import __version__ as _YTDLP_VERSION
 
 from .cookies import lock_for
-from .options import CommonOptions, build_opts
+from .options import FLAT_OUTTMPL, CommonOptions, build_opts
 
 # Subset of yt-dlp's metadata surfaced to clients — also what the future AI/gist
 # layer should persist (title, source, duration, …).
@@ -81,7 +81,9 @@ def _extract(opts: dict[str, Any], url: str, *, download: bool) -> tuple[Path | 
 
 async def get_info(url: str, common: CommonOptions, raw: dict[str, Any] | None) -> dict:
     """Fetch metadata only (no download)."""
-    opts, _ = build_opts(common, raw, url=url, dest_dir=Path("."), write_info=False)
+    opts, _ = build_opts(
+        common, raw, url=url, dest_dir=Path("."), write_info=False, outtmpl=FLAT_OUTTMPL
+    )
     _, info = await asyncio.to_thread(_extract, opts, url, download=False)
     return _curate(info)
 
@@ -93,10 +95,17 @@ async def download(
     dest_dir: Path,
     *,
     write_info: bool,
+    outtmpl: dict[str, str],
 ) -> tuple[Path, dict, list[str]]:
-    """Download into ``dest_dir``. Returns (file_path, metadata, dropped_options)."""
+    """Download into ``dest_dir``. Returns (primary_file, metadata, dropped_options).
+
+    A download may emit more than the primary file (subtitle sidecars, per-chapter
+    clips, .info.json) — see :func:`list_outputs` to enumerate them.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    opts, stripped = build_opts(common, raw, url=url, dest_dir=dest_dir, write_info=write_info)
+    opts, stripped = build_opts(
+        common, raw, url=url, dest_dir=dest_dir, write_info=write_info, outtmpl=outtmpl
+    )
     path, info = await asyncio.to_thread(_extract, opts, url, download=True)
 
     if path is None or not path.is_file():
@@ -106,10 +115,37 @@ async def download(
     return path, _curate(info), stripped
 
 
+# Extensions used to classify the files a download leaves behind.
+_VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4a", ".mp3", ".opus", ".aac", ".flac", ".ogg"}
+_SUB_EXTS = {".srt", ".vtt", ".ass"}
+
+
+def list_outputs(item_dir: Path) -> list[dict]:
+    """Enumerate everything a download produced under its per-item folder."""
+    outputs: list[dict] = []
+    for p in sorted(item_dir.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(item_dir)
+        ext = p.suffix.lower()
+        if p.name.endswith(".info.json"):
+            kind = "metadata"
+        elif "chapters" in rel.parts and ext in _VIDEO_EXTS:
+            kind = "chapter"
+        elif ext in _VIDEO_EXTS:
+            kind = "video"
+        elif ext in _SUB_EXTS:
+            kind = "subtitle"
+        else:
+            kind = "other"
+        outputs.append({"name": str(rel), "kind": kind, "size_bytes": p.stat().st_size})
+    return outputs
+
+
 def _newest_media(dest_dir: Path) -> Path | None:
-    """Fallback when the API didn't report a path: newest non-sidecar file."""
+    """Fallback when the API didn't report a path: newest non-sidecar media file."""
     files = [
-        f for f in dest_dir.iterdir()
-        if f.is_file() and f.suffix not in (".part", ".ytdl", ".json")
+        f for f in dest_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() in _VIDEO_EXTS
     ]
     return max(files, key=lambda f: f.stat().st_mtime) if files else None

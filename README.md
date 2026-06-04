@@ -64,13 +64,39 @@ curl -X POST localhost:8000/resolve -H 'content-type: application/json' \
   -d '{"url":"https://youtu.be/jNQXAC9IVRw","options":{"audio_only":true,"download_sections":"00:01:00-00:02:00"}}'
 ```
 
+## Library layout
+
+Download mode writes a **per-item folder** (generic, not Plex-shaped — a future
+Plex add-on reorganizes from it):
+
+```
+downloads/
+└── The PC-book Neo … [W5BMk-ErRno]/
+    ├── … [W5BMk-ErRno].mp4         ← full video
+    ├── … [W5BMk-ErRno].en.srt      ← subtitle sidecar
+    ├── … [W5BMk-ErRno].info.json
+    └── chapters/                   ← only when split_chapters is on
+        ├── 01 - Intro.mp4
+        └── 11 - Outro.mp4
+```
+
+`POST /resolve` (download) returns `{ dir, files[] }`, each file tagged
+`video` / `chapter` / `subtitle` / `metadata`. **Stream mode is single-file** —
+it ignores subtitles/split (they'd fan out to many files) and relays one video.
+
+> Playlists (a folder of videos, or a folder-of-folders with split on) are a
+> **planned V2** — they're multi-output and long-running, so they need an async
+> job model rather than a blocking request.
+
 ## Options
 
 Sensible defaults, but every yt-dlp option is reachable:
 
-- **`options`** — curated, typed, validated fields (`format`, `audio_only`,
-  `download_sections`, `subtitles`, `sponsorblock_remove`, `impersonate`,
-  `proxy`, `playlist_items`, …). See `GET /options` for the full schema.
+- **`options`** — curated, typed, validated fields: `format`, `audio_only`,
+  `download_sections` (clip), **`split_chapters`** (one clip per chapter + full),
+  **`subtitles`** (on by default → `.srt` sidecars, `sub_langs` default `en`),
+  `embed_subtitles`, `sponsorblock_remove`, `impersonate`, `proxy`,
+  `playlist_items`, … See `GET /options` for the full schema.
 - **`raw_options`** — an arbitrary yt-dlp opts-dict for anything not typed.
 
 `raw_options` is **safety-filtered**: keys that enable command execution,
